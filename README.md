@@ -96,7 +96,6 @@ flowchart TB
 | **镜像拉取超时治理**     | Pod 状态显示 `ImagePullBackOff`                 | 官方 Docker Hub 在国内网络受限     | 切换国内公共镜像加速源，消除拉取重试死锁                     |
 | **Ingress 现代标准演进** | `Warning: ingress.class is deprecated`          | K8s v1.18+ 废弃旧版注解语法        | 升级为 `spec.ingressClassName: traefik`，消除版本弃用告警    |
 
-
 ---
 
 ## 🌐 四、 云原生微服务与 Ingress 网关治理
@@ -110,7 +109,7 @@ flowchart TB
 
 ---
 
-##📂 五、 仓库目录结构全貌
+## 📂 五、 仓库目录结构全貌
 
 ```text
 k3s-edge-cloudnative-lab/
@@ -144,11 +143,10 @@ k3s-edge-cloudnative-lab/
 
 ## 🚀 六、 快速部署与演练指南
 
-1. 一键部署全套云原生业务栈
-# 1. 创建业务专属命名空间并申请动态存储
+# 1. 一键部署全套云原生业务栈
 
 ```bash
-
+#1. 创建业务专属命名空间并申请动态存储
 kubectl create namespace edge-apps
 kubectl apply -f manifests/00-storage/
 
