@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: chaos-oom-demo
+  namespace: edge-apps
+spec:
+  restartPolicy: Always
+  containers:
+  - name: memory-eater
+    image: python:3.9-slim
+    # 容器启动后疯狂申请 100MB 内存
+    command: ["python3", "-c", "a = []; [a.append('x'*1024*1024) for _ in range(100)]"]
+    resources:
+      limits:
+        memory: "30Mi"   # 强制限制最大只能用 30MB 内存

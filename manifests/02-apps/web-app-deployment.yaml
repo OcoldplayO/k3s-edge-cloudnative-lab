@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-web-app
+  namespace: edge-apps
+spec:
+  replicas: 2                       # 核心：2 个副本实现微服务高可用负载均衡
+  selector:
+    matchLabels:
+      app: edge-web-app
+  template:
+    metadata:
+      labels:
+        app: edge-web-app
+    spec:
+      containers:
+      - name: web-app
+        image: nginxdemos/hello:plain-text  # 官方轻量级微服务演示镜像（带主机名与请求回显）
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+        # 健康检查探针：确保流量只分发给健康的 Pod
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+# 内部负载均衡 Service (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-service
+  namespace: edge-apps
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: edge-web-app

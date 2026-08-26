@@ -1,4 +1,8 @@
+<<<<<<< HEAD
                                  Apache License
+=======
+      Apache License
+>>>>>>> a372fb0 (feat: 基于 AlmaLinux 9 与 K3s 的轻量级边缘云原生集群与自动化交付项目初始化)
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
 

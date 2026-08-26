@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data-pvc
+  namespace: edge-apps
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path  # 指定 K3s 自带的动态存储类
+  resources:
+    requests:
+      storage: 2Gi             # 动态申请 2GB 持久化存储空间

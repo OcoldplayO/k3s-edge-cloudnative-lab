@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: edge-mysql
+  namespace: edge-apps
+spec:
+  serviceName: "mysql-headless"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-mysql
+  template:
+    metadata:
+      labels:
+        app: edge-mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        ports:
+        - containerPort: 3306
+          name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "Root123_EdgeCloud"
+        - name: MYSQL_DATABASE
+          value: "zentao_edge"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        # 1. 启动探针 (Startup Probe): 允许 MySQL 最多花 120 秒完成初次初始化建库
+        startupProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 24   # 24 * 5s = 120秒内只要端口通了就算启动成功
+
+        # 2. 存活探针 (Liveness Probe): 启动成功后，每 10 秒探测一次端口存活性
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          periodSeconds: 10
+          timeoutSeconds: 3
+
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  namespace: edge-apps
+spec:
+  ports:
+  - port: 3306
+    targetPort: 3306
+  selector:
+    app: edge-mysql
+  type: ClusterIP
