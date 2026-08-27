@@ -97,11 +97,11 @@ flowchart TB
 
 ## 💾 二、 有状态服务与动态存储治理 (StatefulSet & CSI)
 
-- [x] **CSI 动态存储自动供给：**基于 `local-path` 存储类与 `PersistentVolumeClaim (PVC)` 声明，落地 `WaitForFirstConsumer` 延迟绑定机制，容器调度时自动在底层分配独立物理卷并挂载。
-- [x] **单机容器资产云原生重构：**将传统单机 Docker 架构的 Memos 笔记应用重构为声明式 Kubernetes 清单，依托动态 PVC 与标准 UID/GID 权限隔离，实现应用重启与跨节点漂移时数据零丢失。
-- [x] **StatefulSet 确定性编排：**为 MySQL 5.7 提供固定网络标识（edge-mysql-0）与专用持久化卷，彻底解决裸容器重启数据丢失与网络寻址漂移痛点。
-- [x] **双探针协同防误杀设计：**引入 startupProbe（TCP 探针赋予 120 秒建库缓冲期），彻底解决生产环境中 livenessProbe 过早介入引发的无限 Killing 重启死循环。
-- [x] **微服务 2 副本负载均衡：**业务前端无状态服务采用 Deployment 声明 2 副本，配合 ClusterIP Service 实现容器内部 DNS 服务发现与跨 Pod 负载均衡。
+- [x] **CSI 动态存储自动供给：** 基于 `local-path` 存储类与 `PersistentVolumeClaim (PVC)` 声明，落地 `WaitForFirstConsumer` 延迟绑定机制，容器调度时自动在底层分配独立物理卷并挂载。
+- [x] **单机容器资产云原生重构：** 将传统单机 Docker 架构的 Memos 笔记应用重构为声明式 Kubernetes 清单，依托动态 PVC 与标准 UID/GID 权限隔离，实现应用重启与跨节点漂移时数据零丢失。
+- [x] **StatefulSet 确定性编排：** 为 MySQL 5.7 提供固定网络标识（edge-mysql-0）与专用持久化卷，彻底解决裸容器重启数据丢失与网络寻址漂移痛点。
+- [x] **双探针协同防误杀设计：** 引入 startupProbe（TCP 探针赋予 120 秒建库缓冲期），彻底解决生产环境中 livenessProbe 过早介入引发的无限 Killing 重启死循环。
+- [x] **微服务 2 副本负载均衡：** 业务前端无状态服务采用 Deployment 声明 2 副本，配合 ClusterIP Service 实现容器内部 DNS 服务发现与跨 Pod 负载均衡。
 
 ---
 
@@ -219,7 +219,7 @@ kubectl get pods,pvc,ingress -A
 ```
 - **Web 应用**：https://app.edge.internal
 - **Memos 笔记**：https://memos.edge.internal
-- **Grafana 大盘**：https://grafana.edge.internal（默认账号: admin / 密码: admin）
+- **Grafana 大盘**：https://grafana.edge.internal
 - **Prometheus 控制台**：https://prometheus.edge.internal
 
 ### 3. 执行有状态服务 Pod 容灾自愈测试
