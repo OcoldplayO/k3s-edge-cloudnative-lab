@@ -4,7 +4,7 @@ metadata:
   name: edge-web-app
   namespace: edge-apps
 spec:
-  replicas: 2                       # 核心：2 个副本实现微服务高可用负载均衡
+  replicas: 2
   selector:
     matchLabels:
       app: edge-web-app
@@ -15,31 +15,17 @@ spec:
     spec:
       containers:
       - name: web-app
-        image: nginxdemos/hello:plain-text  # 官方轻量级微服务演示镜像（带主机名与请求回显）
+        image: docker.m.daocloud.io/library/nginx:alpine
         ports:
         - containerPort: 80
         resources:
           requests:
             cpu: "50m"
-            memory: "64Mi"
+            memory: "32Mi"
           limits:
             cpu: "200m"
-            memory: "128Mi"
-        # 健康检查探针：确保流量只分发给健康的 Pod
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 10
-          periodSeconds: 10
+            memory: "64Mi"
 ---
-# 内部负载均衡 Service (ClusterIP)
 apiVersion: v1
 kind: Service
 metadata:
@@ -48,7 +34,8 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-  - port: 80
+  - name: http           # 显式声明端口名称，方便 Ingress 精准匹配
+    port: 80
     targetPort: 80
   selector:
     app: edge-web-app

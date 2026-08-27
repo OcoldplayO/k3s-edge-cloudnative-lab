@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: memos-pvc
+  namespace: edge-apps
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path   # k3s 自带的动态供给存储类
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-memos
+  namespace: edge-apps
+  labels:
+    app: edge-memos
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate              # 单实例 SQLite 数据库，避免并发挂载冲突
+  selector:
+    matchLabels:
+      app: edge-memos
+  template:
+    metadata:
+      labels:
+        app: edge-memos
+    spec:
+      containers:
+        - name: memos
+          image: neosmemo/memos:stable
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MEMOS_PORT
+              value: "5230"
+            - name: MEMOS_DRIVER
+              value: "sqlite"
+            - name: MEMOS_INSTANCE_URL
+              value: "https://memos.edge.internal"
+          ports:
+            - containerPort: 5230
+              name: http
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: memos-data
+              mountPath: /var/opt/memos
+      volumes:
+        - name: memos-data
+          persistentVolumeClaim:
+            claimName: memos-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memos-service
+  namespace: edge-apps
+spec:
+  type: ClusterIP
+  selector:
+    app: edge-memos
+  ports:
+    - name: http
+      port: 5230
+      targetPort: 5230
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: memos-ingress
+  namespace: edge-apps
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - memos.edge.internal
+      secretName: edge-tls-secret  # 复用已创建的 *.edge.internal 泛域名 TLS Secret
+  rules:
+    - host: memos.edge.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: memos-service
+                port:
+                  number: 5230

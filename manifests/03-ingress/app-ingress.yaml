@@ -4,7 +4,12 @@ metadata:
   name: edge-app-ingress
   namespace: edge-apps
 spec:
-  ingressClassName: traefik   # 现代标准写法，消除废弃警告
+  ingressClassName: traefik
+  # 开启 TLS 证书终结
+  tls:
+  - hosts:
+    - app.edge.internal
+    secretName: edge-tls-secret    # 挂载创建的 Secret 证书
   rules:
   - host: app.edge.internal
     http:
