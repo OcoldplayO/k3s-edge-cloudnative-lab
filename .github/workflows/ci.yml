@@ -1,0 +1,164 @@
+name: K3s Edge GitOps & Linting CI Pipeline
+
+# 触发条件：当向 main 分支推送代码或提交 PR 时自动触发
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-and-validate:
+    name: 🔍 代码规范扫描与 YAML 语法校验
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出代码
+      - name: 📥 检出最新 Git 仓库代码
+        uses: actions/checkout@v4
+
+      # 2. 安装环境工具（ShellCheck 和 Python YAML 解析器）
+      - name: 🛠️ 安装基础扫描与语法检查工具
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck python3-yaml
+
+      # 3. 检查所有 Shell 脚本规范与安全性
+      - name: 🛡️ 执行 Shell 脚本静态代码扫描 (ShellCheck)
+        run: |
+          echo "=== 开始扫描项目内所有 .sh 运维脚本 ==="
+          # 扫描根目录及 scripts 目录下的所有脚本，忽略非致命告警
+          find . -name "*.sh" -not -path "*/.*" -exec shellcheck -S warning {} +
+          echo "✅ Shell 脚本安全扫描全部通过！"
+
+      # 4. 检查 Kubernetes Manifests YAML 语法
+      - name: ☸️ 校验 Kubernetes Manifests 清单语法有效性
+        run: |
+          echo "=== 开始校验 manifests/ 下的所有 YAML 清单 ==="
+          python3 -c "
+          import glob, yaml, sys
+          yaml_files = glob.glob('manifests/**/*.yaml', recursive=True) + glob.glob('manifests/**/*.yml', recursive=True)
+          for f in yaml_files:
+              try:
+                  with open(f, 'r') as stream:
+                      list(yaml.safe_load_all(stream))
+                  print(f'✅ [PASS] {f}')
+              except Exception as e:
+                  print(f'❌ [FAIL] {f}: {e}')
+                  sys.exit(1)
+          "
+          echo "✅ 所有 Kubernetes 编排清单语法校验通过！"
+
+      # 5. 发送飞书 ChatOps 构建状态通知卡片
+      - name: 📢 发送飞书 CI 构建结果通知卡片
+        if: always()
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ -z "$FEISHU_WEBHOOK" ]; then
+            echo "⚠️ 未检测到 FEISHU_WEBHOOK Secret，跳过飞书推送"
+            exit 0
+          fi
+
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s')
+          AUTHOR=$(git log -1 --pretty=format:'%an')
+          COMMIT_HASH=$(git log -1 --pretty=format:'%h')
+
+          if [ "$JOB_STATUS" = "success" ]; then
+            HEADER_TEMPLATE="green"
+            TITLE="✅ 【CI 流水线成功】K3s 边缘云原生资产校验通过"
+            STATUS_DESC="🟢 **代码静态扫描与 Kubernetes YAML 语法检查 100% 通过**"
+          else
+            HEADER_TEMPLATE="red"
+            TITLE="❌ 【CI 流水线异常】K3s 边缘云原生资产发现错误"
+            STATUS_DESC="🔴 **检测到 Shell 脚本不合规或 YAML 语法错误，请及时排查**"
+          fi
+
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "msg_type": "interactive",
+            "card": {
+              "config": {
+                "wide_screen_mode": true
+              },
+              "header": {
+                "template": "${HEADER_TEMPLATE}",
+                "title": {
+                  "content": "${TITLE}",
+                  "tag": "plain_text"
+                }
+              },
+              "elements": [
+                {
+                  "tag": "div",
+                  "fields": [
+                    {
+                      "is_short": true,
+                      "text": {
+                        "tag": "lark_md",
+                        "content": "**📦 仓库**\n${{ github.repository }}"
+                      }
+                    },
+                    {
+                      "is_short": true,
+                      "text": {
+                        "tag": "lark_md",
+                        "content": "**🌿 分支**\n${{ github.ref_name }}"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "tag": "hr"
+                },
+                {
+                  "tag": "div",
+                  "fields": [
+                    {
+                      "is_short": true,
+                      "text": {
+                        "tag": "lark_md",
+                        "content": "**👤 触发者**\n${AUTHOR}"
+                      }
+                    },
+                    {
+                      "is_short": true,
+                      "text": {
+                        "tag": "lark_md",
+                        "content": "**🔖 Commit 编号**\n${COMMIT_HASH}"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "tag": "div",
+                  "text": {
+                    "tag": "lark_md",
+                    "content": "**📝 提交说明**:\n${COMMIT_MSG}\n\n${STATUS_DESC}"
+                  }
+                },
+                {
+                  "tag": "action",
+                  "actions": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "🔍 查看 GitHub Actions 云端构建详情"
+                      },
+                      "type": "primary",
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+          EOF
+          )
+
+          curl -s -X POST -H "Content-Type: application/json" -d "$JSON_PAYLOAD" "$FEISHU_WEBHOOK" > /dev/null
+          echo "[+] 飞书 CI 结果卡片推送完成！"
