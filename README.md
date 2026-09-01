@@ -145,6 +145,32 @@ flowchart TB
 
 ---
 
+## 📸 项目实战交付与 ChatOps 运行情况
+
+以下为本边缘云原生集群在 Linux 环境中的真实运行成果与自动化流水线交互图证：
+
+### 1. Grafana 边缘全栈可观测大盘 (Node-Exporter 1860 中文大盘)
+集群内以 DaemonSet + ConfigMap 模式交付 Prometheus 与 Grafana 监控栈，实测实时呈现节点 CPU 负载、内存水位 (23.1%)、磁盘 I/O 读写与网络吞吐指标：
+
+![Grafana 全栈可观测大盘](docs/screenshots/01-k3s-grafana-dashboard.png)
+
+### 2. K3s 边缘集群健康多维动态加权巡检 (100分绿卡)
+每日通过 crontab 调度 `k8s_feishu_report.sh` 脚本，引入多维动态加权算法，智能过滤 Completed 任务并精准捕获 Pod 状态，自动向飞书群推送自适应健康卡片：
+
+![飞书 ChatOps 动态加权巡检卡片](docs/screenshots/02-feishu-k8s-health-card.png)
+
+### 3. GitHub Actions CI/CD 云端质量门禁与飞书构建播报
+代码推送至 main 分支后自动触发云端流水线，执行 Shell 脚本静态代码扫描 (ShellCheck) 与 Kubernetes Manifests YAML 语法校验，联动飞书 Webhook 实时播报构建结果：
+
+![GitHub Actions CI 飞书流水线卡片](docs/screenshots/03-github-actions-feishu-ci.png)
+
+### 4. Traefik Ingress 泛域名 443 TLS 证书卸载与有状态服务访问
+基于自建私有 CA 签发的 `*.edge.internal` 泛域名证书，通过 Traefik 完成 HTTPS 443 端口证书卸载，并结合 Local-Path CSI 动态存储卷成功挂载持久化业务：
+
+![Traefik TLS 网关与 Memos 业务访问](docs/screenshots/04-traefik-tls-memos-ingress.png)
+
+---
+
 ## 📂 六、 仓库目录结构全貌
 
 ```text
