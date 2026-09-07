@@ -1,0 +1,13 @@
+---
+# 系统资源配额限制
+system_nofile_limit: 65535
+system_nproc_limit: 65535
+
+# 目标时区
+system_timezone: "Asia/Shanghai"
+
+# 内核网络与内存调优参数
+system_sysctl_settings:
+  net.ipv4.ip_forward: 1                  # 开启容器与网络转发
+  vm.max_map_count: 262144                # 调大内存映射区 (满足数据库/ES要求)
+  net.core.somaxconn: 32768               # 调大 TCP 监听队列上限 (防高并发丢包)

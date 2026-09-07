@@ -1,0 +1,2 @@
+[target_servers]
+openeuler ansible_host=172.29.199.115 ansible_port=2222 ansible_user=root

@@ -1,0 +1,123 @@
+---
+# ==============================================================================
+# 阶段 1：在 openEuler 调用真实 dmdba 脚本执行达梦全备并动态提取
+# ==============================================================================
+- name: 📦 [源端 openEuler] 调度真实达梦全备并提取最新归档
+  hosts: db_servers
+  gather_facts: no
+  vars:
+    dmbak_dir: "/dmdata/dmbak"
+
+  tasks:
+    - name: 1. 切换至 dmdba 用户执行真实的 backup_dm8_pro.sh 备份脚本
+      shell: |
+        su - dmdba -c "cd /home/dmdba/dameng-ops-lab/scripts && ./backup_dm8_pro.sh"
+      register: backup_exec_log
+
+    - name: 2. 动态定位 /dmdata/dmbak 目录下最新生成的 .dmp.gz 真实备份文件
+      shell: |
+        find {{ dmbak_dir }} -name "dm_full_*.dmp.gz" -type f -mmin -10 2>/dev/null | sort -n | tail -1
+      register: latest_dmp_path
+      failed_when: latest_dmp_path.stdout == ""
+
+    - name: 3. 动态定位对应的 .md5 校验文件
+      shell: |
+        find {{ dmbak_dir }} -name "dm_full_*.dmp.gz.md5" -type f -mmin -10 2>/dev/null | sort -n | tail -1
+      register: latest_md5_path
+      failed_when: latest_md5_path.stdout == ""
+
+    - name: 4. 提取文件名、体积与 MD5 数字指纹
+      shell: |
+        FILE_PATH="{{ latest_dmp_path.stdout }}"
+        MD5_PATH="{{ latest_md5_path.stdout }}"
+        FILE_NAME=$(basename ${FILE_PATH})
+        FILE_SIZE=$(ls -lh ${FILE_PATH} | awk '{print $5}')
+        MD5_HASH=$(awk '{print $1}' ${MD5_PATH})
+        echo "${FILE_NAME}|${FILE_SIZE}|${MD5_HASH}"
+      register: backup_meta_raw
+
+    - name: 5. 固化元数据供异地端使用
+      set_fact:
+        real_backup_file: "{{ backup_meta_raw.stdout.split('|')[0] }}"
+        real_backup_size: "{{ backup_meta_raw.stdout.split('|')[1] }}"
+        real_backup_hash: "{{ backup_meta_raw.stdout.split('|')[2] }}"
+
+    - name: 6. 跨主机将真实达梦 .dmp.gz 备份拉取至 AlmaLinux 异地存储池
+      fetch:
+        src: "{{ latest_dmp_path.stdout }}"
+        dest: "/root/offsite_backups/{{ real_backup_file }}"
+        flat: yes
+
+    - name: 7. 跨主机将 .md5 校验文件拉取至 AlmaLinux 异地存储池
+      fetch:
+        src: "{{ latest_md5_path.stdout }}"
+        dest: "/root/offsite_backups/{{ real_backup_file }}.md5"
+        flat: yes
+
+# ==============================================================================
+# 阶段 2：在 AlmaLinux 执行跨网络数据完整性验签与飞书播报
+# ==============================================================================
+- name: 🛡️ [异地端 AlmaLinux] 校验数据完整性 (md5sum -c) 并推送 ChatOps 卡片
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    FEISHU_WEBHOOK: "{{ lookup('env', 'FEISHU_WEBHOOK') | default('https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL', true) }}"
+    target_host: "{{ groups['db_servers'][0] }}"
+    backup_file: "{{ hostvars[target_host]['real_backup_file'] }}"
+    backup_size: "{{ hostvars[target_host]['real_backup_size'] }}"
+    backup_hash: "{{ hostvars[target_host]['real_backup_hash'] }}"
+
+  tasks:
+    - name: 1. 在 AlmaLinux 异地本地执行 MD5 完整性哈希比对
+      shell: |
+        cd /root/offsite_backups
+        LOCAL_CALC_MD5=$(md5sum {{ backup_file }} | awk '{print $1}')
+        if [ "${LOCAL_CALC_MD5}" = "{{ backup_hash }}" ]; then
+            echo "MATCH_SUCCESS"
+        else
+            echo "HASH_MISMATCH"
+            exit 1
+        fi
+      register: verify_check_output
+
+    - name: 2. 推送飞书 ChatOps 异地容灾归档成功卡片
+      uri:
+        url: "{{ FEISHU_WEBHOOK }}"
+        method: POST
+        body_format: json
+        body:
+          msg_type: "interactive"
+          card:
+            header:
+              template: "green"
+              title:
+                content: "🛡️ 【自动化容灾】达梦数据库真实全备异地归档成功"
+                tag: "plain_text"
+            elements:
+              - tag: "div"
+                fields:
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**📦 真实归档文件**\n{{ backup_file }}"
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**💾 压缩后体积**\n{{ backup_size }}"
+              - tag: "hr"
+              - tag: "div"
+                fields:
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🔐 异地 MD5 验签**\n✅ 100% 完整无损 (哈希一致)"
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🔑 密码学指纹**\n`{{ backup_hash }}`"
+              - tag: "div"
+                text:
+                  tag: "lark_md"
+                  content: "**📍 异地安全存储路径**:\n`AlmaLinux:/root/offsite_backups/{{ backup_file }}`\n\n**🤖 执行引擎**: `Ansible 跨主机调度 /home/dmdba/dameng-ops-lab/scripts/backup_dm8_pro.sh`"
+      when: FEISHU_WEBHOOK != "YOUR_FEISHU_WEBHOOK_URL"

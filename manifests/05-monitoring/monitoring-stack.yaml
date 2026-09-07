@@ -140,8 +140,7 @@ spec:
       port: 9090
       targetPort: 9090
 ---
-
-# 在 Grafana 前面追加 PVC 定义
+# 3. Grafana 可视化仪表盘 (带 Local-Path PVC 永久持久化)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -150,14 +149,11 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: local-path   # 自动绑定 K3s 本地持久化磁盘
   resources:
     requests:
       storage: 2Gi
 ---
-# 在 Grafana Deployment 中添加挂载
-
-# 3. Grafana 可视化仪表盘
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -165,6 +161,8 @@ metadata:
   namespace: monitoring
 spec:
   replicas: 1
+  strategy:
+    type: Recreate              # 保证单实例安全挂载 PVC
   selector:
     matchLabels:
       app: grafana
@@ -180,10 +178,26 @@ spec:
           env:
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: "admin"
+            - name: GF_SERVER_ROOT_URL
+              value: "https://grafana.edge.internal/"
           ports:
             - containerPort: 3000
               name: http
----        
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana   # 持久化挂载目录
+      volumes:
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-pvc
+---
 apiVersion: v1
 kind: Service
 metadata:

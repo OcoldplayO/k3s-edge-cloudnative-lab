@@ -6,8 +6,8 @@ set -eu
 # 功能描述: 多维动态加权健康评分、智能过滤 Completed Job、异常 Pod 精准提取与飞书卡片播报
 # ==============================================================================
 
-# 1. 飞书自定义机器人 Webhook (请替换为您自己的 Webhook)
-FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/05ce99c0-054b-40bd-9f93-93058ea3cfc3"
+# 1. 飞书自定义机器人 Webhook (优先读取环境变量，默认使用占位模板)
+FEISHU_WEBHOOK="${FEISHU_WEBHOOK:-https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL}"
 
 # 2. 基础环境与时间戳
 HOSTNAME_STR=$(hostname)

@@ -1,0 +1,6 @@
+---
+- name: 🚀 执行 Linux 生产节点系统初始化安全与性能基线交付
+  hosts: target_servers
+  gather_facts: yes
+  roles:
+    - system_baseline

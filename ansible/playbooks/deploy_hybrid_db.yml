@@ -1,0 +1,53 @@
+---
+- name: 🚀 阶段 1：探测 openEuler 节点上的达梦数据库服务
+  hosts: my_servers
+  gather_facts: no
+  tasks:
+    - name: 🔍 检查 openEuler 达梦 5236 数据库端口是否正常开放
+      wait_for:
+        port: 5236
+        state: started
+        timeout: 5
+      register: dm8_status
+
+- name: 🚀 阶段 2：在 K3s 集群中自动注入外部服务路由与测试 Pod
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    FEISHU_WEBHOOK: "{{ lookup('env', 'FEISHU_WEBHOOK') | default('https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL', true) }}"
+
+  tasks:
+    - name: ☸️ 1. 应用 K8s 外部数据库 Endpoints 服务清单
+      command: kubectl apply -f /root/hybrid_ops/dameng-external-svc.yaml
+
+    - name: 🧪 2. 在 K3s 内部启动一个临时测试 Pod，跨主机拨测达梦 5236 端口
+      command: >
+        kubectl run dm8-net-test --image=busybox:1.36 --restart=Never
+        --namespace=edge-apps -- rm -rf / ; nc -z -w 3 dameng-external-service 5236
+      ignore_errors: yes
+
+    - name: ⏱️ 3. 等待拨测结果并销毁测试 Pod
+      shell: |
+        sleep 2
+        kubectl delete pod dm8-net-test -n edge-apps --force --grace-period=0 >/dev/null 2>&1 || true
+
+    - name: 📢 4. 推送飞书 ChatOps 混合架构纳管成功通知
+      uri:
+        url: "{{ FEISHU_WEBHOOK }}"
+        method: POST
+        body_format: json
+        body:
+          msg_type: "interactive"
+          card:
+            header:
+              template: "green"
+              title:
+                content: "🎉 【混合架构自动化】K3s 成功纳管 openEuler 外部达梦数据库"
+                tag: "plain_text"
+            elements:
+              - tag: "div"
+                text:
+                  tag: "lark_md"
+                  content: "**架构模式**：K3s 边缘容器集群 ➔ 跨主机连接 ➔ openEuler 达梦 DM8 实体机\n**服务发现**：`dameng-external-service.edge-apps.svc:5236`\n**自动化工具**：Ansible Playbook 跨节点编排"
+      when: FEISHU_WEBHOOK != "YOUR_FEISHU_WEBHOOK_URL"

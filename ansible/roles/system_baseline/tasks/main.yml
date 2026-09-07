@@ -1,0 +1,37 @@
+---
+- name: 1. 配置系统标准时区
+  timezone:
+    name: "{{ system_timezone }}"
+
+- name: 2. 调优最大打开文件数 (nofile) 与最大进程数 (nproc)
+  pam_limits:
+    domain: '*'
+    limit_type: "{{ item.type }}"
+    limit_item: "{{ item.item }}"
+    value: "{{ item.value }}"
+  loop:
+    - { type: 'soft', item: 'nofile', value: "{{ system_nofile_limit }}" }
+    - { type: 'hard', item: 'nofile', value: "{{ system_nofile_limit }}" }
+    - { type: 'soft', item: 'nproc',  value: "{{ system_nproc_limit }}" }
+    - { type: 'hard', item: 'nproc',  value: "{{ system_nproc_limit }}" }
+
+- name: 3. 批量写入生产级内核参数 (/etc/sysctl.d/99-baseline.conf)
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    state: present
+    reload: no
+  loop: "{{ system_sysctl_settings | dict2items }}"
+  notify: 重载内核 sysctl 参数
+
+- name: 4. 下发生产环境登录安全警示 Banner (/etc/motd)
+  copy:
+    content: |
+      ================================================================
+      ⚠️  [AUTHORIZED ACCESS ONLY]
+      This system is managed by Ansible Automation Framework.
+      All operations are audited and monitored. Baseline Hardened.
+      ================================================================
+    dest: /etc/motd
+    mode: '0644'

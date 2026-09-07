@@ -1,0 +1,3 @@
+---
+- name: 重载内核 sysctl 参数
+  command: sysctl --system
