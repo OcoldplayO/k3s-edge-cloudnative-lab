@@ -138,7 +138,7 @@ jobs:
           if status == 'success':
               header_template = 'green'
               title = '✅ 【CI/CD 交付成功】K3s 边缘云原生制品发布完成'
-              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品 (GHCR)**:\n> 🚀 **镜像标识**: `{image_uri}`\n> 📥 **拉取命令**: `{pull_cmd}`'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品 (GHCR)**:\n> 🚀 **镜像标识**: {image_uri}\n> 📥 **拉取命令**: {pull_cmd}'
           else:
               header_template = 'red'
               title = '❌ 【CI 流水线阻断】K3s 资产发现语法或规范错误'
