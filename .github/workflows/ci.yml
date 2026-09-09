@@ -79,15 +79,19 @@ jobs:
           commit_msg = os.getenv('COMMIT_MSG', '').strip().split('\n')[0]
           run_url = os.getenv('RUN_URL', '')
 
-          # 提取最后 6 行错误并去掉首尾空白
+          # 提取错误日志中包含 ❌、FAIL 或 Error 的真实报错行
           error_slice = ''
           if os.path.exists('error_slice.log') and status != 'success':
               with open('error_slice.log', 'r') as f:
-                  lines = [line.strip() for line in f.readlines() if line.strip()]
-                  error_slice = '\n'.join(lines[-6:])
+                  raw_lines = [line.strip() for line in f.readlines() if line.strip()]
+                  # 找到所有报错行并格式化为飞书支持的引用块格式 (> 内容)
+                  err_lines = [f'> ⚠️ {l}' for l in raw_lines if 'FAIL' in l or 'error' in l.lower() or 'line' in l.lower()]
+                  if not err_lines:
+                      err_lines = [f'> {l}' for l in raw_lines[-5:]]
+                  error_slice = '\n'.join(err_lines)
 
-          # 飞书纯代码块语法：```\n内容\n``` (不加 text 或 bash 后缀)
-          formatted_error = f'```\n{error_slice}\n```' if error_slice else '⚠️ 未捕获到文本切片'
+          # 飞书渲染语法：使用 > 引用块，坚决不用 ``` 代码块
+          formatted_error = f'🚨 **崩溃现场错误切片 (Error Slice)**:\n{error_slice}' if error_slice else '⚠️ 未捕获到文本切片'
 
           if status == 'success':
               header_template = 'green'
@@ -113,6 +117,13 @@ jobs:
                       'text': {
                           'tag': 'lark_md',
                           'content': f'🚨 **崩溃现场错误切片 (Error Slice)**:\n```text\n{error_slice}\n```' if error_slice else '⚠️ 未捕获到文本切片，请点击下方详情按钮排查。'
+                      }
+                  },
+                  {
+                    'tag': 'div',
+                      'text': {
+                          'tag': 'lark_md',
+                          'content': formatted_error
                       }
                   }
               ]
