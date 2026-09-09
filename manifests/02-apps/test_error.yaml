@@ -1,0 +1,7 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-app
+spec:
+ replicas: 1
+   bad_indent_field: true   # 👈 故意制造错误的缩进
