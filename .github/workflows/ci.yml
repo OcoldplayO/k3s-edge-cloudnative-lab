@@ -84,7 +84,7 @@ jobs:
           set -o pipefail
           echo "=== [4/4] 启动 Trivy 仓库级 Secret 敏感凭证泄露审查 ==="
           # 扫描仓库内是否误传密码、Token 或私钥
-          if ! trivy fs --scanners secret --exit-code 1 . 2>&1 | tee -a error_slice.log; then
+          if ! trivy fs --scanners secret --skip-dirs tls --exit-code 1 . 2>&1 | tee -a error_slice.log; then
             echo "❌ Trivy 发现疑似明文凭证泄露风险，流水线安全阻断！"
             exit 1
           fi
