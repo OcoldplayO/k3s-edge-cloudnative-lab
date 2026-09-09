@@ -79,54 +79,31 @@ jobs:
           commit_msg = os.getenv('COMMIT_MSG', '').strip().split('\n')[0]
           run_url = os.getenv('RUN_URL', '')
 
-          # 提取错误日志中包含 ❌、FAIL 或 Error 的真实报错行
-          error_slice = ''
+          # 提取纯粹的错误日志行（自动过滤通过信息与头部噪音）
+          error_lines = []
           if os.path.exists('error_slice.log') and status != 'success':
-              with open('error_slice.log', 'r') as f:
-                  raw_lines = [line.strip() for line in f.readlines() if line.strip()]
-                  # 找到所有报错行并格式化为飞书支持的引用块格式 (> 内容)
-                  err_lines = [f'> ⚠️ {l}' for l in raw_lines if 'FAIL' in l or 'error' in l.lower() or 'line' in l.lower()]
-                  if not err_lines:
-                      err_lines = [f'> {l}' for l in raw_lines[-5:]]
-                  error_slice = '\n'.join(err_lines)
+              with open('error_slice.log', 'r', encoding='utf-8', errors='ignore') as f:
+                  for line in f:
+                      cleaned = line.strip()
+                      if cleaned and not cleaned.startswith('===') and not cleaned.startswith('✅'):
+                          error_lines.append(cleaned)
 
-          # 飞书渲染语法：使用 > 引用块，坚决不用 ``` 代码块
-          formatted_error = f'🚨 **崩溃现场错误切片 (Error Slice)**:\n{error_slice}' if error_slice else '⚠️ 未捕获到文本切片'
+          if error_lines:
+              # 取最后 6 行真实报错，并转为飞书原生支持的引用块格式 (> 内容)
+              formatted_slice = '\n'.join([f'> ⚠️ {l}' for l in error_lines[-6:]])
+          else:
+              formatted_slice = '> ⚠️ 未捕获到文本切片，请点击下方详情按钮排查。'
 
           if status == 'success':
               header_template = 'green'
               title = '✅ 【CI 构建通过】K3s 边缘云原生资产校验成功'
-              summary_text = '🟢 **所有 Shell 脚本规范与 Kubernetes YAML 语法检查 100% 通过**'
-              detail_elements = [
-                  {
-                      'tag': 'div',
-                      'text': {'tag': 'lark_md', 'content': f'**📝 提交说明**:\n{commit_msg}\n\n{summary_text}'}
-                  }
-              ]
+              status_desc = '🟢 **所有 Shell 脚本规范与 Kubernetes YAML 语法检查 100% 通过**'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n{status_desc}'
           else:
               header_template = 'red'
               title = '❌ 【CI 流水线阻断】K3s 资产发现语法或规范错误'
-              summary_text = '🔴 **检测到 Shell 脚本不合规或 YAML 语法异常，流水线已安全阻断**'
-              detail_elements = [
-                  {
-                      'tag': 'div',
-                      'text': {'tag': 'lark_md', 'content': f'**📝 提交说明**:\n{commit_msg}\n\n{summary_text}'}
-                  },
-                  {
-                      'tag': 'div',
-                      'text': {
-                          'tag': 'lark_md',
-                          'content': f'🚨 **崩溃现场错误切片 (Error Slice)**:\n```text\n{error_slice}\n```' if error_slice else '⚠️ 未捕获到文本切片，请点击下方详情按钮排查。'
-                      }
-                  },
-                  {
-                      'tag': 'div',
-                      'text': {
-                          'tag': 'lark_md',
-                          'content': formatted_error
-                      }
-                  }
-              ]
+              status_desc = '🔴 **检测到 Shell 脚本不合规或 YAML 语法异常，流水线已安全阻断**'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n{status_desc}\n\n🚨 **崩溃现场错误切片 (Error Slice)**:\n{formatted_slice}'
 
           card_payload = {
               'msg_type': 'interactive',
@@ -144,8 +121,11 @@ jobs:
                               {'is_short': True, 'text': {'tag': 'lark_md', 'content': f'**🔖 Commit**\n{commit_hash}'}}
                           ]
                       },
-                      {'tag': 'hr'}
-                  ] + detail_elements + [
+                      {'tag': 'hr'},
+                      {
+                          'tag': 'div',
+                          'text': {'tag': 'lark_md', 'content': detail_text}
+                      },
                       {
                           'tag': 'action',
                           'actions': [
