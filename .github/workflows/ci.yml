@@ -8,7 +8,6 @@ on:
     branches:
       - main
 
-# 声明写权限，允许流水线将镜像推送到 GitHub Packages (GHCR)
 permissions:
   contents: read
   packages: write
@@ -90,7 +89,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # 8. 飞书 ChatOps 全链路闭环通知 (带制品镜像信息与错误切片)
+      # 8. 飞书 ChatOps 全链路闭环通知
       - name: 📢 发送飞书 ChatOps CI 构建结果通知卡片
         if: always()
         env:
@@ -99,8 +98,9 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           AUTHOR: ${{ github.actor }}
           COMMIT_HASH: ${{ github.sha }}
+          REPO_NAME: ${{ github.repository }}               # 👈 显式注入仓库名
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          IMAGE_TAG: ghcr.io/${{ github.repository }}/edge-web-app:sha-${{ github.sha }}
+          PACKAGE_URL: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}%2Fedge-web-app
         run: |
           python3 -c "
           import os, json, urllib.request
@@ -115,9 +115,11 @@ jobs:
           commit_hash = os.getenv('COMMIT_HASH', '')[:7]
           commit_msg = os.getenv('COMMIT_MSG', '').strip().split('\n')[0]
           run_url = os.getenv('RUN_URL', '')
-          repo = os.getenv('GITHUB_REPOSITORY', '').lower()
-          short_sha = commit_hash
-          image_uri = f'ghcr.io/{repo}/edge-web-app:sha-{short_sha}'
+          repo_name = os.getenv('REPO_NAME', 'ocoldplayo/k3s-edge-cloudnative-lab').lower()
+          package_url = os.getenv('PACKAGE_URL', run_url)
+
+          image_uri = f'ghcr.io/{repo_name}/edge-web-app:sha-{commit_hash}'
+          pull_cmd = f'docker pull {image_uri}'
 
           # 提取纯粹的错误日志行
           error_lines = []
@@ -136,13 +138,11 @@ jobs:
           if status == 'success':
               header_template = 'green'
               title = '✅ 【CI/CD 交付成功】K3s 边缘云原生制品发布完成'
-              status_desc = f'🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品**:\n`{image_uri}`'
-              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n{status_desc}'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品 (GHCR)**:\n> 🚀 **镜像标识**: `{image_uri}`\n> 📥 **拉取命令**: `{pull_cmd}`'
           else:
               header_template = 'red'
               title = '❌ 【CI 流水线阻断】K3s 资产发现语法或规范错误'
-              status_desc = '🔴 **检测到 Shell 脚本不合规或 YAML 语法异常，流水线已安全阻断**'
-              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n{status_desc}\n\n🚨 **崩溃现场错误切片 (Error Slice)**:\n{formatted_slice}'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🔴 **检测到 Shell 脚本不合规或 YAML 语法异常，流水线已安全阻断**\n\n🚨 **崩溃现场错误切片 (Error Slice)**:\n{formatted_slice}'
 
           card_payload = {
               'msg_type': 'interactive',
@@ -170,7 +170,7 @@ jobs:
                           'actions': [
                               {
                                   'tag': 'button',
-                                  'text': {'tag': 'plain_text', 'content': '🔍 查看 GitHub Actions 云端构建详情'},
+                                  'text': {'tag': 'plain_text', 'content': '🔍 查看 GitHub Actions 构建详情'},
                                   'type': 'primary' if status == 'success' else 'danger',
                                   'url': run_url
                               }
