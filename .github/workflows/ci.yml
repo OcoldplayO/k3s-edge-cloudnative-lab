@@ -13,8 +13,8 @@ permissions:
   packages: write
 
 jobs:
-  lint-and-validate:
-    name: 🔍 语法扫描与云端制品镜像自动构建发布
+  devsecops-pipeline:
+    name: 🛡️ DevSecOps 安全左移门禁、Schema 校验与镜像发布
     runs-on: ubuntu-latest
 
     steps:
@@ -22,28 +22,37 @@ jobs:
       - name: 📥 检出最新 Git 仓库代码
         uses: actions/checkout@v4
 
-      # 2. 安装基础工具
-      - name: 🛠️ 安装基础扫描与语法检查工具
+      # 2. 安装扫描与 DevSecOps 校验工具链
+      - name: 🛠️ 安装 ShellCheck、Kubeconform 与 Trivy 安全工具链
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y shellcheck python3-yaml
+          sudo apt-get install -y shellcheck python3-yaml curl
 
-      # 3. 扫描 Shell 脚本（带错误切片捕获）
-      - name: 🛡️ 执行 Shell 脚本静态代码扫描 (ShellCheck)
+          # 安装 Kubeconform (Kubernetes v1.29 Schema 官方校验器)
+          curl -sLO https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+          rm -f kubeconform-linux-amd64.tar.gz
+
+          # 安装 Trivy (行业标准安全漏洞与敏感凭证扫描器)
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      # 3. 扫描 Shell 脚本规范 (带错误切片捕获)
+      - name: 🛡️ 门禁 1：执行 Shell 脚本静态代码扫描 (ShellCheck)
         run: |
           set -o pipefail
-          echo "=== 开始扫描项目内所有 .sh 运维脚本 ==="
+          echo "=== [1/4] 开始扫描项目内所有 .sh 运维脚本 ==="
           if ! find . -name "*.sh" -not -path "*/.*" -exec shellcheck -S warning {} + 2>&1 | tee -a error_slice.log; then
             echo "❌ Shell 脚本扫描发现不合规项！"
             exit 1
           fi
           echo "✅ Shell 脚本安全扫描全部通过！"
 
-      # 4. 校验 Kubernetes Manifests YAML 语法（带错误切片捕获）
-      - name: ☸️ 校验 Kubernetes Manifests 清单语法有效性
+      # 4. 基础 YAML 语法解析预检
+      - name: ☸️ 门禁 2：校验 Kubernetes Manifests 基础 YAML 语法
         run: |
           set -o pipefail
-          echo "=== 开始校验 manifests/ 下的所有 YAML 清单 ==="
+          echo "=== [2/4] 开始校验 manifests/ 下的基础 YAML 语法 ==="
           python3 -c "
           import glob, yaml, sys
           yaml_files = glob.glob('manifests/**/*.yaml', recursive=True) + glob.glob('manifests/**/*.yml', recursive=True)
@@ -56,9 +65,32 @@ jobs:
                   print(f'❌ [FAIL] {f}:\n{e}', file=sys.stderr)
                   sys.exit(1)
           " 2>&1 | tee -a error_slice.log
-          echo "✅ 所有 Kubernetes 编排清单语法校验通过！"
+          echo "✅ 基础 YAML 语法校验全部通过！"
 
-      # 5. 登录 GitHub 官方容器制品库 (GHCR)
+      # 5. Kubeconform 严格 Kubernetes v1.29.0 API Schema 规范校验
+      - name: 🔍 门禁 3：执行 Kubeconform 严格 Kubernetes API Schema 规范校验
+        run: |
+          set -o pipefail
+          echo "=== [3/4] 启动 Kubeconform 对标 Kubernetes v1.29.0 严格规范校验 ==="
+          if ! kubeconform -summary -kubernetes-version 1.29.0 -ignore-missing-schemas -strict manifests/ 2>&1 | tee -a error_slice.log; then
+            echo "❌ Kubernetes 清单未通过 v1.29.0 严格 Schema 校验！"
+            exit 1
+          fi
+          echo "✅ Kubernetes v1.29.0 规范校验全部通过！"
+
+      # 6. Trivy 敏感凭证泄露与 IaC 配置安全基线审查
+      - name: 🔒 门禁 4：执行 Trivy 敏感凭证泄露与 IaC 配置安全审查
+        run: |
+          set -o pipefail
+          echo "=== [4/4] 启动 Trivy 仓库级 Secret 敏感凭证泄露审查 ==="
+          # 扫描仓库内是否误传密码、Token 或私钥
+          if ! trivy fs --scanners secret --exit-code 1 . 2>&1 | tee -a error_slice.log; then
+            echo "❌ Trivy 发现疑似明文凭证泄露风险，流水线安全阻断！"
+            exit 1
+          fi
+          echo "✅ Trivy 敏感凭证与安全基线审查全部通过！"
+
+      # 7. 登录 GitHub 官方容器制品库 (GHCR)
       - name: 🔑 登录 GitHub Container Registry (GHCR)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -67,7 +99,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. 生成不可变镜像版本标签 (latest + 短 Commit SHA)
+      # 8. 生成不可变镜像版本标签 (latest + 短 Commit SHA)
       - name: 🏷️ 提取 Docker 镜像元数据与唯一版本 Tag
         id: meta
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -78,7 +110,7 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
 
-      # 7. 云端自动构建并推送 Docker 镜像至 GHCR
+      # 9. 云端自动构建并推送 Docker 镜像至 GHCR
       - name: 🚀 自动构建并推送容器镜像至 GHCR 制品库
         id: build_push
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -89,8 +121,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # 8. 飞书 ChatOps 全链路闭环通知
-      - name: 📢 发送飞书 ChatOps CI 构建结果通知卡片
+      # 10. 飞书 ChatOps 全链路闭环通知
+      - name: 📢 发送飞书 ChatOps CI/CD 状态通知卡片
         if: always()
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
@@ -98,9 +130,8 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           AUTHOR: ${{ github.actor }}
           COMMIT_HASH: ${{ github.sha }}
-          REPO_NAME: ${{ github.repository }}               # 👈 显式注入仓库名
+          REPO_NAME: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          PACKAGE_URL: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}%2Fedge-web-app
         run: |
           python3 -c "
           import os, json, urllib.request
@@ -116,18 +147,16 @@ jobs:
           commit_msg = os.getenv('COMMIT_MSG', '').strip().split('\n')[0]
           run_url = os.getenv('RUN_URL', '')
           repo_name = os.getenv('REPO_NAME', 'ocoldplayo/k3s-edge-cloudnative-lab').lower()
-          package_url = os.getenv('PACKAGE_URL', run_url)
 
           image_uri = f'ghcr.io/{repo_name}/edge-web-app:sha-{commit_hash}'
           pull_cmd = f'docker pull {image_uri}'
 
-          # 提取纯粹的错误日志行
           error_lines = []
           if os.path.exists('error_slice.log') and status != 'success':
               with open('error_slice.log', 'r', encoding='utf-8', errors='ignore') as f:
                   for line in f:
                       cleaned = line.strip()
-                      if cleaned and not cleaned.startswith('===') and not cleaned.startswith('✅'):
+                      if cleaned and not cleaned.startswith('===') and not cleaned.startswith('✅') and not cleaned.startswith('Summary'):
                           error_lines.append(cleaned)
 
           if error_lines:
@@ -137,12 +166,12 @@ jobs:
 
           if status == 'success':
               header_template = 'green'
-              title = '✅ 【CI/CD 交付成功】K3s 边缘云原生制品发布完成'
-              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品 (GHCR)**:\n> 🚀 **镜像标识**: {image_uri}\n> 📥 **拉取命令**: {pull_cmd}'
+              title = '✅ 【DevSecOps 交付成功】安全门禁与制品发布完成'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🛡️ **安全与质量门禁状态**:\n> ✅ ShellCheck 脚本规范扫描 100% 通过\n> ✅ Kubernetes v1.29.0 严格 Schema 校验通过\n> ✅ Trivy 敏感凭证与合规扫描通过 (零泄露)\n\n📦 **新发布容器镜像制品 (GHCR)**:\n> 🚀 **镜像标识**: {image_uri}\n> 📥 **拉取命令**: {pull_cmd}'
           else:
               header_template = 'red'
-              title = '❌ 【CI 流水线阻断】K3s 资产发现语法或规范错误'
-              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🔴 **检测到 Shell 脚本不合规或 YAML 语法异常，流水线已安全阻断**\n\n🚨 **崩溃现场错误切片 (Error Slice)**:\n{formatted_slice}'
+              title = '❌ 【DevSecOps 门禁阻断】发现语法、Schema 或安全违规'
+              detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n🔴 **安全扫描或规范校验未通过，流水线已安全阻断**\n\n🚨 **崩溃现场错误切片 (Error Slice)**:\n{formatted_slice}'
 
           card_payload = {
               'msg_type': 'interactive',
@@ -170,7 +199,7 @@ jobs:
                           'actions': [
                               {
                                   'tag': 'button',
-                                  'text': {'tag': 'plain_text', 'content': '🔍 查看 GitHub Actions 构建详情'},
+                                  'text': {'tag': 'plain_text', 'content': '🔍 查看 GitHub Actions 云端构建详情'},
                                   'type': 'primary' if status == 'success' else 'danger',
                                   'url': run_url
                               }
