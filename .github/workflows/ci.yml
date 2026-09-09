@@ -8,9 +8,14 @@ on:
     branches:
       - main
 
+# 声明写权限，允许流水线将镜像推送到 GitHub Packages (GHCR)
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   lint-and-validate:
-    name: 🔍 代码规范扫描、YAML 语法校验与崩溃切片捕获
+    name: 🔍 语法扫描与云端制品镜像自动构建发布
     runs-on: ubuntu-latest
 
     steps:
@@ -54,7 +59,38 @@ jobs:
           " 2>&1 | tee -a error_slice.log
           echo "✅ 所有 Kubernetes 编排清单语法校验通过！"
 
-      # 5. 飞书 ChatOps 双态自适应通知 (成功发绿卡 / 失败带崩溃日志切片发红卡)
+      # 5. 登录 GitHub 官方容器制品库 (GHCR)
+      - name: 🔑 登录 GitHub Container Registry (GHCR)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 6. 生成不可变镜像版本标签 (latest + 短 Commit SHA)
+      - name: 🏷️ 提取 Docker 镜像元数据与唯一版本 Tag
+        id: meta
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/edge-web-app
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      # 7. 云端自动构建并推送 Docker 镜像至 GHCR
+      - name: 🚀 自动构建并推送容器镜像至 GHCR 制品库
+        id: build_push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/web-app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # 8. 飞书 ChatOps 全链路闭环通知 (带制品镜像信息与错误切片)
       - name: 📢 发送飞书 ChatOps CI 构建结果通知卡片
         if: always()
         env:
@@ -64,6 +100,7 @@ jobs:
           AUTHOR: ${{ github.actor }}
           COMMIT_HASH: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE_TAG: ghcr.io/${{ github.repository }}/edge-web-app:sha-${{ github.sha }}
         run: |
           python3 -c "
           import os, json, urllib.request
@@ -78,8 +115,11 @@ jobs:
           commit_hash = os.getenv('COMMIT_HASH', '')[:7]
           commit_msg = os.getenv('COMMIT_MSG', '').strip().split('\n')[0]
           run_url = os.getenv('RUN_URL', '')
+          repo = os.getenv('GITHUB_REPOSITORY', '').lower()
+          short_sha = commit_hash
+          image_uri = f'ghcr.io/{repo}/edge-web-app:sha-{short_sha}'
 
-          # 提取纯粹的错误日志行（自动过滤通过信息与头部噪音）
+          # 提取纯粹的错误日志行
           error_lines = []
           if os.path.exists('error_slice.log') and status != 'success':
               with open('error_slice.log', 'r', encoding='utf-8', errors='ignore') as f:
@@ -89,15 +129,14 @@ jobs:
                           error_lines.append(cleaned)
 
           if error_lines:
-              # 取最后 6 行真实报错，并转为飞书原生支持的引用块格式 (> 内容)
               formatted_slice = '\n'.join([f'> ⚠️ {l}' for l in error_lines[-6:]])
           else:
               formatted_slice = '> ⚠️ 未捕获到文本切片，请点击下方详情按钮排查。'
 
           if status == 'success':
               header_template = 'green'
-              title = '✅ 【CI 构建通过】K3s 边缘云原生资产校验成功'
-              status_desc = '🟢 **所有 Shell 脚本规范与 Kubernetes YAML 语法检查 100% 通过**'
+              title = '✅ 【CI/CD 交付成功】K3s 边缘云原生制品发布完成'
+              status_desc = f'🟢 **代码静态扫描与 YAML 语法检查 100% 通过**\n\n📦 **新发布容器镜像制品**:\n`{image_uri}`'
               detail_text = f'**📝 提交说明**:\n{commit_msg}\n\n{status_desc}'
           else:
               header_template = 'red'
