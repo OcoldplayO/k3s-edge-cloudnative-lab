@@ -120,7 +120,7 @@ jobs:
                       }
                   },
                   {
-                    'tag': 'div',
+                      'tag': 'div',
                       'text': {
                           'tag': 'lark_md',
                           'content': formatted_error
