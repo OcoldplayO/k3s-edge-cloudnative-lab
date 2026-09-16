@@ -131,7 +131,7 @@ jobs:
           key: ${{ secrets.K3S_SSH_KEY }}
           script_stop: true # 遇到任何报错立刻阻断，防止带病发布
           script: |
-          kubectl rollout status deployment/order-api -n apps  echo "=== 1. 成功建立跨洋安全通道，已连接到 ali-master 司令部 ==="
+            kubectl rollout status deployment/order-api -n apps  echo "=== 1. 成功建立跨洋安全通道，已连接到 ali-master 司令部 ==="
             
             # 提取 7 位短哈希，精准匹配 GHCR 镜像 Tag
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
