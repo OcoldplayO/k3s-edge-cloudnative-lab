@@ -15,7 +15,9 @@ spec:
     spec:
       containers:
       - name: web-app
-        image: docker.m.daocloud.io/library/nginx:alpine
+        # 将原本默认的 nginx:alpine 替换为你自己的 GHCR 制品镜像
+        image: ghcr.io/ocoldplayo/k3s-edge-cloudnative-lab/edge-web-app:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
         resources:
