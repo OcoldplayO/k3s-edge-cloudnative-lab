@@ -1,0 +1,134 @@
+---
+# ==============================================================================
+# 部署 AWS 东京节点 7x24 小时独立哨兵守护进程 (Systemd + Python + 飞书告警)
+# ==============================================================================
+- name: 🛡️ 在 AWS 东京节点装配全球外部健康哨兵
+  hosts: backup_offsite
+  become: yes
+  vars:
+    # 填入 ali-master 当前的最新公网 IP
+    master_public_ip: "{{ lookup('env', 'ALI_MASTER_IP') | default('1.2.3.4', true) }}"
+    probe_url: "http://{{ master_public_ip }}:30052/healthz"
+    feishu_webhook: "{{ lookup('env', 'FEISHU_WEBHOOK') | default('https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL', true) }}"
+    sentinel_dir: "/home/ubuntu/sentinel"
+
+  tasks:
+    - name: 1. 创建哨兵工作目录
+      file:
+        path: "{{ sentinel_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: 2. 写入 Python 智能状态机探测引擎
+      copy:
+        dest: "{{ sentinel_dir }}/dm8_watchdog.py"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+        content: |
+          #!/usr/bin/env python3
+          import time
+          import json
+          import urllib.request
+          import urllib.error
+
+          TARGET_URL = "{{ probe_url }}"
+          FEISHU_WEBHOOK = "{{ feishu_webhook }}"
+          CHECK_INTERVAL = 30     # 每 30 秒探测一次
+          FAIL_THRESHOLD = 2     # 连续 2 次失败才触发报警（防网络抖动）
+
+          current_state = "UP"   # 初始状态默认正常
+          failure_count = 0
+
+          def send_feishu(is_alert, detail_msg):
+              if not FEISHU_WEBHOOK or "YOUR_FEISHU" in FEISHU_WEBHOOK:
+                  print("[-] 未配置有效 Webhook，跳过推送")
+                  return
+              
+              template = "red" if is_alert else "green"
+              title = "🚨 【海外哨兵告警】阿里云达梦数据库端到端链路失联！" if is_alert else "🟢 【海外哨兵恢复】阿里云达数据库与微服务全链路恢复正常"
+              state_text = "🔴 **CRITICAL (异常中断)**" if is_alert else "🟢 **HEALTHY (运行正常)**"
+              
+              payload = {
+                  "msg_type": "interactive",
+                  "card": {
+                      "header": {"template": template, "title": {"content": title, "tag": "plain_text"}},
+                      "elements": [
+                          {"tag": "div", "fields": [
+                              {"is_short": True, "text": {"tag": "lark_md", "content": f"**🌐 哨兵节点**\n`AWS 东京 (aws-tokyo)`"}},
+                              {"is_short": True, "text": {"tag": "lark_md", "content": f"**🎯 监测目标**\n`ali-master:30052`"}}
+                          ]},
+                          {"tag": "hr"},
+                          {"tag": "div", "text": {"tag": "lark_md", "content": f"**当前链路状态**: {state_text}\n**状态切片诊断**: {detail_msg}\n**探测时间戳**: `{time.strftime('%Y-%m-%d %H:%M:%S')}`"}},
+                          {"tag": "div", "text": {"tag": "lark_md", "content": "**检测链路拓扑**: `AWS东京` ➔ `Master网关` ➔ `Worker探针Pod` ➔ `ali-db物理达梦`"}}
+                      ]
+                  }
+              }
+              try:
+                  req = urllib.request.Request(FEISHU_WEBHOOK, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+                  urllib.request.urlopen(req, timeout=10)
+                  print(f"[+] 飞书状态反转卡片推送成功: {state_text}")
+              except Exception as e:
+                  print(f"[-] 飞书推送失败: {e}")
+
+          print(f"[*] AWS 东京独立哨兵守护进程启动，目标: {TARGET_URL}")
+
+          while True:
+              probe_ok = False
+              err_info = ""
+              try:
+                  req = urllib.request.Request(TARGET_URL, headers={'User-Agent': 'AWS-Tokyo-Sentinel/1.0'})
+                  with urllib.request.urlopen(req, timeout=5) as response:
+                      if response.status == 200:
+                          body = response.read().decode('utf-8')
+                          if '"status":"UP"' in body:
+                              probe_ok = True
+                      else:
+                          err_info = f"HTTP 状态码异常: {response.status}"
+              except urllib.error.HTTPError as e:
+                  err_info = f"HTTP 端到端报错: {e.code} (数据库探针返回异常)"
+              except Exception as e:
+                  err_info = f"网络超时或无法建连: {str(e)}"
+
+              # 状态机防抖逻辑
+              if probe_ok:
+                  failure_count = 0
+                  if current_state == "DOWN":
+                      current_state = "UP"
+                      send_feishu(False, "端到端探测重新获得 200 OK，达梦 5236 端口与 K3s 内部代理通信恢复！")
+              else:
+                  failure_count += 1
+                  print(f"[!] 探测失败 ({failure_count}/{FAIL_THRESHOLD}): {err_info}")
+                  if failure_count >= FAIL_THRESHOLD and current_state == "UP":
+                      current_state = "DOWN"
+                      send_feishu(True, f"连续 {failure_count} 次探测失败！根因: {err_info}")
+
+              time.sleep(CHECK_INTERVAL)
+
+    - name: 3. 注册 Systemd 系统守护服务
+      copy:
+        dest: /etc/systemd/system/dm8-sentinel.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=AWS Tokyo External Sentinel Prober for Aliyun DM8 & K3s
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          Restart=always
+          RestartSec=10
+          ExecStart=/usr/bin/python3 {{ sentinel_dir }}/dm8_watchdog.py
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: 4. 激活并启动 7x24 小时哨兵守护进程
+      systemd:
+        name: dm8-sentinel
+        state: restarted
+        enabled: yes
+        daemon_reload: yes

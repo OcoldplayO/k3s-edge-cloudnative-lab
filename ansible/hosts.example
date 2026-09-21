@@ -1,2 +1,27 @@
-[target_servers]
-openeuler ansible_host=172.29.199.115 ansible_port=2222 ansible_user=root
+# ==============================================================================
+# 跨国三地混合多云算力模板 (Production Inventory Example)
+# 使用说明：复制本文件为 hosts.ini 并填入你的真实物理 IP: cp hosts.example hosts.ini
+# ==============================================================================
+
+[onprem_datacenter]
+# 1. 本地自建机房 / 边缘演习靶场 (WSL2 openEuler 达梦节点)
+openeuler ansible_host=XXX.XXX.X.XXX ansible_port=2222 ansible_user=root
+
+[database_primary]
+# 2. 阿里云成都生产金库 (独立物理部署信创达梦 DM8 引擎)
+ali-db ansible_host=YOUR_ALIYUN_DB_PUBLIC_IP ansible_port=22 ansible_user=root
+
+[backup_offsite]
+# 3. AWS 东京海外 7x24 异地冷灾备存储池与全球外部哨兵
+aws-tokyo ansible_host=YOUR_AWS_TOKYO_PUBLIC_IP ansible_port=22 ansible_user=ubuntu
+
+# ------------------------------------------------------------------------------
+# 组嵌套与联邦调度编排定义
+# ------------------------------------------------------------------------------
+[multi_cloud:children]
+database_primary
+backup_offsite
+
+[hybrid_all:children]
+onprem_datacenter
+multi_cloud

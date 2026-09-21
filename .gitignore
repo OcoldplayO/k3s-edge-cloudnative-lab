@@ -12,3 +12,4 @@ offsite_backups/
 # 忽略包含真实主机密码的资产清单（仅保留 hosts.example 模板）
 ansible/hosts
 !ansible/hosts.example
+ansible/hosts.ini
