@@ -1,6 +1,7 @@
 ---
 # ==============================================================================
 # 跨国多云自动化容灾流水线 (AliCloud Chengdu -> Local Bastion -> AWS Tokyo)
+# 生产加固版：保留原版三阶段全量拓扑，增强 Retention 7天生命周期轮转与只读任务防抖
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -60,9 +61,9 @@
         - "ali_dm8_prod_{{ backup_tag }}.dmp.gz.md5"
 
 # ------------------------------------------------------------------------------
-# 阶段 2：跨公网投递至 AWS 东京海外灾备池并执行远程一致性验签
+# 阶段 2：跨公网传递至 AWS 东京海外灾备池、执行双端 MD5 验签与 7天生命周期轮转
 # ------------------------------------------------------------------------------
-- name: 🌐 [灾备端 aws-tokyo] 接收跨国冷备并执行双端 MD5 验签
+- name: 🌐 [灾备端 aws-tokyo] 接收跨国冷备并执行双端 MD5 验签与存储生命周期治理
   hosts: backup_offsite
   gather_facts: no
   vars:
@@ -84,26 +85,43 @@
         - "{{ hostvars[target_source]['real_backup_file'] }}"
         - "{{ hostvars[target_source]['real_backup_file'] }}.md5"
 
-    - name: 3. 在 AWS 东京节点远程执行 MD5 密码学比对
+    - name: 3. 在 AWS 东京节点远程执行 MD5 密码学比对 (消除伪 changed)
       shell: |
         cd {{ aws_backup_dir }}
         md5sum -c {{ hostvars[target_source]['real_backup_file'] }}.md5
       register: aws_verify_result
+      changed_when: false
       failed_when: "'OK' not in aws_verify_result.stdout"
+
+    # --- 工业级增量加固：Retention 存储生命周期治理 ---
+    - name: 4. 存储生命周期治理：检索 7 天以前的历史过期备份
+      find:
+        paths: "{{ aws_backup_dir }}"
+        patterns: "ali_dm8_prod_*.dmp.gz*"
+        age: 7d
+      register: expired_backups
+
+    - name: 5. 存储生命周期治理：物理轮转清理过期冷备介质
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ expired_backups.files }}"
 
 # ------------------------------------------------------------------------------
 # 阶段 3：本地堡垒机聚合元数据，向飞书推送终极跨国容灾卡片
 # ------------------------------------------------------------------------------
-- name: 📢 [总控台 Localhost] 飞书 ChatOps 跨国异地冷容灾归档播报
+- name: 📱 [总控台 Localhost] 飞书 ChatOps 跨国异地冷容灾归档播报
   hosts: localhost
   connection: local
   gather_facts: no
   vars:
     FEISHU_WEBHOOK: "{{ lookup('env', 'FEISHU_WEBHOOK') | default('https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL', true) }}"
     source_host: "{{ groups['database_primary'][0] }}"
+    target_dr: "{{ groups['backup_offsite'][0] }}"
     backup_file: "{{ hostvars[source_host]['real_backup_file'] }}"
     backup_size: "{{ hostvars[source_host]['real_backup_size'] }}"
     backup_hash: "{{ hostvars[source_host]['real_backup_hash'] }}"
+    cleaned_count: "{{ hostvars[target_dr]['expired_backups']['matched'] | default(0) }}"
   tasks:
     - name: 1. 发送飞书 ChatOps 终极全链路绿卡
       uri:
@@ -128,20 +146,30 @@
                   - is_short: true
                     text:
                       tag: "lark_md"
-                      content: "**💾 压缩后体积**\n`{{ backup_size }}`"
+                      content: "**⚖️ 压缩后体积**\n`{{ backup_size }}`"
               - tag: "hr"
               - tag: "div"
                 fields:
                   - is_short: true
                     text:
                       tag: "lark_md"
-                      content: "**🔐 异地 MD5 验签**\n✅ **100% 完整无损 (双端一致)**"
+                      content: "**🔒 异地 MD5 验签**\n✅ **100% 完整无损 (双端一致)**"
                   - is_short: true
                     text:
                       tag: "lark_md"
                       content: "**🔑 密码学数字指纹**\n`{{ backup_hash }}`"
               - tag: "div"
+                fields:
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🧹 存储生命周期**\n已自动轮转清理 `{{ cleaned_count }}` 个历史过期介质 (保留 7 天)"
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🌐 容灾拓扑链路**\n`ali-db` ➔ `WSL2 堡垒机` ➔ `AWS 东京`"
+              - tag: "div"
                 text:
                   tag: "lark_md"
-                  content: "**🌐 灾备拓扑链路**:\n`阿里云成都 (ali-db)` ➔ `WSL2 堡垒机调度` ➔ `AWS 东京海外存储池`\n**🤖 执行引擎**: `Ansible 跨国混合云编排流水线`"
+                  content: "**🤖 执行引擎**: `Ansible 跨国混合云编排流水线 (生产加固版)`"
       when: FEISHU_WEBHOOK != "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL"
