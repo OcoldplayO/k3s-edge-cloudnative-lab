@@ -1,0 +1,183 @@
+---
+# ==============================================================================
+# 跨云异地冷备回灌演练 (AWS 东京 -> 本地堡垒机 -> openEuler 达梦靶场 + 飞书双态播报)
+# ==============================================================================
+
+- name: "1. [海外灾备端 aws-tokyo] 定位最新冷备、验签并拉取至堡垒机"
+  hosts: backup_offsite
+  gather_facts: no
+  vars:
+    aws_backup_dir: "/home/ubuntu/offsite_backups"
+  tasks:
+    - name: 1.1 查找最新的 ali_dm8_prod_*.dmp.gz
+      shell: ls -1t {{ aws_backup_dir }}/ali_dm8_prod_*.dmp.gz | head -1
+      register: latest_gz
+      changed_when: false
+
+    - name: 1.2 提取文件名与 MD5 哈希值
+      shell: |
+        cd {{ aws_backup_dir }}
+        FILE_NAME=$(basename {{ latest_gz.stdout }})
+        md5sum -c ${FILE_NAME}.md5 >/dev/null
+        HASH_VAL=$(awk '{print $1}' ${FILE_NAME}.md5)
+        FILE_SIZE=$(ls -lh ${FILE_NAME} | awk '{print $5}')
+        echo "${FILE_NAME}|${FILE_SIZE}|${HASH_VAL}"
+      register: aws_meta
+      changed_when: false
+
+    - name: 1.3 固化冷备元数据
+      set_fact:
+        drill_file: "{{ aws_meta.stdout.split('|')[0] }}"
+        drill_size: "{{ aws_meta.stdout.split('|')[1] }}"
+        drill_hash: "{{ aws_meta.stdout.split('|')[2] }}"
+
+    - name: 1.4 拉取 .dmp.gz 与 .md5 到堡垒机中转目录
+      fetch:
+        src: "{{ aws_backup_dir }}/{{ item }}"
+        dest: "/root/offsite_backups/restore_drill/{{ item }}"
+        flat: yes
+      loop:
+        - "{{ drill_file }}"
+        - "{{ drill_file }}.md5"
+
+- name: "2. [堡垒机 localhost] 中转端 MD5 验签"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    target_dr: "{{ groups['backup_offsite'][0] }}"
+    drill_file: "{{ hostvars[target_dr]['drill_file'] }}"
+  tasks:
+    - name: 2.1 堡垒机本地校验 MD5
+      shell: cd /root/offsite_backups/restore_drill && md5sum -c {{ drill_file }}.md5
+      register: local_md5
+      changed_when: false
+      failed_when: "'OK' not in local_md5.stdout"
+
+- name: "3. [本地靶场 openeuler] 推送介质、验签并执行 dimp 回灌验证（含异常捕获）"
+  hosts: onprem_datacenter
+  gather_facts: no
+  vars:
+    target_dr: "{{ groups['backup_offsite'][0] }}"
+    drill_file: "{{ hostvars[target_dr]['drill_file'] }}"
+    dmp_file: "{{ drill_file | regex_replace('\\.gz$', '') }}"
+    target_dir: "/home/dmdba/restore_drill"
+    dm8_local_pwd: "{{ lookup('env', 'DM8_LOCAL_PWD') }}"
+  tasks:
+    - name: 3.0 校验本地达梦凭据环境变量已注入
+      fail:
+        msg: "未检测到环境变量 DM8_LOCAL_PWD，请先执行 source /root/.dr_secrets.env"
+      when: dm8_local_pwd | length == 0
+
+    - block:
+        - name: 3.1 创建靶场回灌目录
+          file:
+            path: "{{ target_dir }}"
+            state: directory
+            owner: dmdba
+            group: dinstall
+            mode: '0755'
+
+        - name: 3.2 推送冷备包与 MD5 到 openEuler
+          copy:
+            src: "/root/offsite_backups/restore_drill/{{ item }}"
+            dest: "{{ target_dir }}/{{ item }}"
+            owner: dmdba
+            group: dinstall
+            mode: '0644'
+          loop:
+            - "{{ drill_file }}"
+            - "{{ drill_file }}.md5"
+
+        - name: 3.3 openEuler 端执行 MD5 验签并解压
+          shell: |
+            set -eu
+            cd {{ target_dir }}
+            md5sum -c {{ drill_file }}.md5
+            gunzip -f {{ drill_file }}
+          register: unzip_res
+          failed_when: "'OK' not in unzip_res.stdout"
+
+        - name: 3.4 调用 dimp 回灌到本地达梦实例（时间戳独立日志防阻塞+留存审计链）
+          shell: |
+            set -eu
+            DRILL_TS=$(date +%Y%m%d_%H%M%S)
+            LOG_NAME="restore_drill_${DRILL_TS}.log"
+            su - dmdba -c "env LD_LIBRARY_PATH=/home/dmdba/dmdbms/bin /home/dmdba/dmdbms/bin/dimp USERID=SYSDBA/{{ dm8_local_pwd }}@127.0.0.1:5236 FILE={{ dmp_file }} DIRECTORY={{ target_dir }} LOG=${LOG_NAME} TABLE_EXISTS_ACTION=REPLACE < /dev/null"
+            find {{ target_dir }} -name "restore_drill_*.log" -mtime +7 -delete
+            echo "LOG_FILE=${LOG_NAME}"
+          register: dimp_res
+          no_log: true    
+
+        - name: 3.5 记录回灌成功状态与日志摘要
+          set_fact:
+            drill_status: "SUCCESS"
+            drill_summary: "{{ dimp_res.stdout_lines[-5:] | join(' | ') }}"
+
+      rescue:
+        - name: 3.R 捕获回灌失败状态与报错切片
+          set_fact:
+            drill_status: "FAILED"
+            drill_summary: "{{ ansible_failed_result.stderr | default(ansible_failed_result.stdout) | default(ansible_failed_result.msg) | replace('\n', ' ') }}"
+
+- name: "4. [总控台 localhost] 飞书 ChatOps 回灌演练双态卡片播报"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    FEISHU_WEBHOOK: "{{ lookup('env', 'FEISHU_WEBHOOK') | default('https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_FEISHU_WEBHOOK_URL', true) }}"
+    dr_host: "{{ groups['backup_offsite'][0] }}"
+    target_host: "{{ groups['onprem_datacenter'][0] }}"
+    drill_file: "{{ hostvars[dr_host]['drill_file'] }}"
+    drill_size: "{{ hostvars[dr_host]['drill_size'] }}"
+    drill_hash: "{{ hostvars[dr_host]['drill_hash'] }}"
+    drill_status: "{{ hostvars[target_host]['drill_status'] | default('FAILED') }}"
+    drill_summary: "{{ hostvars[target_host]['drill_summary'] | default('未知异常') }}"
+    is_success: "{{ drill_status == 'SUCCESS' }}"
+  tasks:
+    - name: 4.1 推送飞书 ChatOps 回灌演练结果卡片（绿卡成功 / 红卡告警）
+      uri:
+        url: "{{ FEISHU_WEBHOOK }}"
+        method: POST
+        use_proxy: no 
+        body_format: json
+        body:
+          msg_type: "interactive"
+          card:
+            header:
+              template: "{{ 'green' if is_success else 'red' }}"
+              title:
+                content: "{{ '🛡️ 【跨云容灾演练】AWS 异地冷备拉取与达梦回灌验证成功' if is_success else '🚨 【跨云容灾告警】AWS 异地冷备回灌验证失败' }}"
+                tag: "plain_text"
+            elements:
+              - tag: "div"
+                fields:
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**📦 演练冷备介质**\n`{{ drill_file }}` ({{ drill_size }})"
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🔐 三端 MD5 验签**\n{{ '✅ AWS / 堡垒机 / 靶场三端一致' if is_success else '⚠️ 请核查演练日志' }}"
+              - tag: "hr"
+              - tag: "div"
+                fields:
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🔑 密码学指纹**\n`{{ drill_hash }}`"
+                  - is_short: true
+                    text:
+                      tag: "lark_md"
+                      content: "**🌐 回灌拓扑链路**\n`AWS 东京` ➔ `WSL2 堡垒机` ➔ `openEuler 靶场`"
+              - tag: "div"
+                text:
+                  tag: "lark_md"
+                  content: "**📋 回灌结果摘要**:\n> {{ drill_summary }}"
+      when: "'YOUR_FEISHU_WEBHOOK_URL' not in FEISHU_WEBHOOK"
+
+    - name: 4.2 若回灌失败则终止流水线并返回非零状态码
+      fail:
+        msg: "回灌演练失败，已发送飞书红卡告警：{{ drill_summary }}"
+      when: not is_success
